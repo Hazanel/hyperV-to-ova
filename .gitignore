@@ -34,3 +34,5 @@ bin
 *.raw
 *.xml
 *.ovf
+hyperv
+*.vhdx

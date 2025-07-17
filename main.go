@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hyperv/common"
+	osutil "hyperv/os"
 	"hyperv/ova"
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -84,11 +85,11 @@ func main() {
 		var path string
 		switch v := vmInfoMap.(type) {
 		case map[string]interface{}: // single VM
-			path, _ = extractPath(v)
+			path, _ = common.ExtractPath(v)
 		case []interface{}: // list of VMs
 			if len(v) > 0 {
 				if m, ok := v[0].(map[string]interface{}); ok {
-					path, _ = extractPath(m)
+					path, _ = common.ExtractPath(m)
 				}
 			}
 		}
@@ -124,7 +125,7 @@ func main() {
 		}
 
 		fmt.Printf("Guest OS Info: %+v\n", guestOSJson)
-		guestOSMap, err := ova.ParseGuestOSInfo(guestOSJson)
+		guestOSMap, err := osutil.ParseGuestOSInfo(guestOSJson)
 		if err != nil {
 			log.Fatalf("Failed to parse guest OS info: %v", err)
 		}
@@ -165,7 +166,7 @@ func main() {
 		defer scpClient.Close()
 
 		if savejsonfile {
-			if err := saveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
+			if err := common.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
 				log.Fatalf("%v", err)
 			}
 		}
@@ -227,22 +228,16 @@ func main() {
 
 		fmt.Println("VHDX ocnvrsion completed successfully.")
 
-		os.Rename(localFile+"-sda", removeFileExtension(localFile)+".raw")
+		os.Rename(localFile+"-sda", common.RemoveFileExtension(localFile)+".raw")
 
 		ovaFile, err := ova.FormatFromHyperV(vmMap)
 		if err != nil {
 			log.Fatalf("Failed to format OVF: %s", err)
 		}
-		if err := os.WriteFile(removeFileExtension(localFile)+".ovf", ovaFile, 0644); err != nil {
+		if err := os.WriteFile(common.RemoveFileExtension(localFile)+".ovf", ovaFile, 0644); err != nil {
 			log.Fatalf("Failed to write OVF file: %v", err)
 		}
 		fmt.Println("OVF file created successfully: vm-2019.ovf")
-
-		// Make sure to be loged-in to the cluster before running this command
-		cmd = exec.Command("./cluster-login.sh", "cluster-login", "qemtv-06")
-		if err := cmd.Run(); err != nil {
-			log.Fatalf("Failed to log in to the cluster: %v", err)
-		}
 
 	}
 
@@ -297,32 +292,4 @@ func GetGuestOSInfoFromVM(client *winrm.Client, vmName, guestUser, guestPassword
 		return "", fmt.Errorf("non-zero exit code: %d\nstderr: %s", exitCode, stderr.String())
 	}
 	return stdout.String(), nil
-}
-
-func extractPath(vm map[string]interface{}) (string, bool) {
-	if drives, ok := vm["HardDrives"]; ok {
-		if dlist, ok := drives.([]interface{}); ok && len(dlist) > 0 {
-			if d, ok := dlist[0].(map[string]interface{}); ok {
-				if p, ok := d["Path"].(string); ok {
-					return p, true
-				}
-			}
-		}
-	}
-	return "", false
-}
-
-func saveVMJsonToFile(jsonOut []byte, filename string) error {
-
-	err := os.WriteFile(filename, jsonOut, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write JSON to file: %w", err)
-	}
-	fmt.Printf("JSON output saved to: %s\n", filename)
-	return nil
-}
-
-func removeFileExtension(filename string) string {
-	ext := filepath.Ext(filename)
-	return strings.TrimSuffix(filename, ext)
 }
