@@ -1,24 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"hyperv/common"
+	hyperv "hyperv/common"
 	osutil "hyperv/os"
 	"hyperv/ova"
 	"log"
-	"os"
-	"os/exec"
-	"strings"
-	"time"
-
-	"github.com/bramvdbogaerde/go-scp"
-	"github.com/bramvdbogaerde/go-scp/auth"
-	"github.com/joho/godotenv"
-	"github.com/masterzen/winrm"
-	"golang.org/x/crypto/ssh"
 )
 
 //Make sure to have quemu installed:
@@ -46,250 +34,76 @@ import (
 const savejsonfile bool = false
 
 func main() {
-	err := godotenv.Load()
+	client, hostIP, sshPort, user, password, err := hyperv.LoadHyperVConnection()
 	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-	// Get credentials
-	user := os.Getenv("HYPERV_USER")
-	password := os.Getenv("HYPERV_PASS")
-
-	if user == "" || password == "" {
-		log.Fatal("Missing credentials in environment")
+		log.Fatalf("Connection setup failed: %v", err)
 	}
 
-	host := "192.168.122.249:22" // SSH port 22
-	endpoint := winrm.NewEndpoint("192.168.122.249", 5985, false, false, nil, nil, nil, 0)
-	client, err := winrm.NewClient(endpoint, user, password)
+	vmNames, err := hyperv.PerformVMAction(client, "", hyperv.ListVMs)
 	if err != nil {
-		log.Fatalf("Failed to create WinRM client: %s", err)
+		log.Fatalf("Failed to list VMs: %v", err)
 	}
 
-	vmNames, err := getVMNames(client)
-	if err != nil {
-		panic(err)
-	}
+	names := vmNames.([]string)
 
-	for _, name := range vmNames {
-		fmt.Printf("Getting info for VM: %s\n", name)
-		vmInfoMap, err := getVMInfo(client, name)
+	for _, vmName := range names {
+		fmt.Printf("Fetching info for VM: %s\n", vmName)
+
+		// 2. Fetch full VM info
+		infoResult, err := hyperv.PerformVMAction(client, vmName, hyperv.GetVMInfo)
 		if err != nil {
-			fmt.Printf("Failed to get info for %s: %v\n", name, err)
+			log.Printf("Failed to get VM info: %v", err)
 			continue
 		}
 
-		jsonOut, _ := json.MarshalIndent(vmInfoMap, "", "  ")
-		//fmt.Println("Parsed JSON:\n", string(jsonOut))
+		vmInfoMap := infoResult.(map[string]interface{})
 
-		// Step 2: Extract VHDX path (assumes first VM, adjust if needed)
-		var path string
-		switch v := vmInfoMap.(type) {
-		case map[string]interface{}: // single VM
-			path, _ = common.ExtractPath(v)
-		case []interface{}: // list of VMs
-			if len(v) > 0 {
-				if m, ok := v[0].(map[string]interface{}); ok {
-					path, _ = common.ExtractPath(m)
-				}
-			}
-		}
-		if path == "" {
-			log.Fatal("No VHDX path found in VM data")
-		}
-		fmt.Printf("VHDX path: %s\n", path)
-
-		// Extract VM name from JSON (optional fallback)
-		vmName := ""
-		switch v := vmInfoMap.(type) {
-		case map[string]interface{}:
-			if name, ok := v["Name"].(string); ok {
-				vmName = name
-			}
-		case []interface{}:
-			if len(v) > 0 {
-				if m, ok := v[0].(map[string]interface{}); ok {
-					if name, ok := m["Name"].(string); ok {
-						vmName = name
-					}
-				}
-			}
-		}
-		if vmName == "" {
-			log.Fatal("Failed to determine VM name from JSON")
+		// 3. Extract VHDX path
+		remotePath, _ := hyperv.ExtractPath(vmInfoMap)
+		if remotePath == "" {
+			log.Fatalf("No VHDX path found in VM data")
 		}
 
-		guestOSJson, err := GetGuestOSInfoFromVM(client, vmName, user, password)
+		// 4. Get Guest OS Info
+		guestInfoJson, err := hyperv.GetGuestOSInfoFromVM(client, vmName, user, password)
 		if err != nil {
-			fmt.Println("Error getting guest OS info - Please make sure the VM is on :", err)
-			return
+			log.Printf("VM '%s' may be OFF or unreachable: %v", vmName, err)
+			continue
 		}
-
-		fmt.Printf("Guest OS Info: %+v\n", guestOSJson)
-		guestOSMap, err := osutil.ParseGuestOSInfo(guestOSJson)
+		guestOSMap, err := osutil.ParseGuestOSInfo(guestInfoJson)
 		if err != nil {
 			log.Fatalf("Failed to parse guest OS info: %v", err)
 		}
+		vmInfoMap["GuestOSInfo"] = guestOSMap
 
-		// Type assert to map[string]interface{}
-		vmMap, ok := vmInfoMap.(map[string]interface{})
-		if !ok {
-			log.Fatalf("expected JSON object (map[string]interface{}), got something else")
-			return
-		}
-		vmMap["GuestOSInfo"] = guestOSMap
-
-		// Stop the VM
+		// 5. Shutdown VM
 		fmt.Printf("Shutting down VM '%s'...\n", vmName)
-		shutdownCmd := fmt.Sprintf(`powershell -Command "Stop-VM -Name '%s' -Force -Confirm:$false"`, vmName)
-
-		var stopOut, stopErr bytes.Buffer
-		stopExitCode, err := client.Run(shutdownCmd, &stopOut, &stopErr)
-		if err != nil {
-			log.Fatalf("Failed to shut down VM: %v\nStderr: %s", err, stopErr.String())
+		if _, err := hyperv.PerformVMAction(client, vmName, hyperv.Shutdown); err != nil {
+			log.Fatalf("Failed to shut down VM: %v", err)
 		}
-		fmt.Printf("Shutdown completed (exit code %d)\n", stopExitCode)
-
-		// Create SCP client config using password auth
-		clientConfig, err := auth.PasswordKey(user, password, ssh.InsecureIgnoreHostKey())
-		if err != nil {
-			log.Fatalf("Failed to create SSH client config: %v", err)
-		}
-
-		// Create new SCP client
-		scpClient := scp.NewClient(host, &clientConfig)
-
-		// Connect to the SSH server
-		err = scpClient.Connect()
-		if err != nil {
-			log.Fatalf("Failed to connect to SSH server: %v", err)
-		}
-		defer scpClient.Close()
 
 		if savejsonfile {
-			if err := common.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
+			jsonOut, _ := json.MarshalIndent(infoResult, "", "  ")
+
+			if err := hyperv.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
 				log.Fatalf("%v", err)
 			}
 		}
+
 		localFile := vmName + ".vhdx"
 
-		// Create local file to write to
-		f, err := os.Create(localFile)
-		if err != nil {
-			log.Fatalf("Failed to create local file: %v", err)
-		}
-		defer f.Close()
-
-		// Download remote file via SCP
-		done := make(chan struct{})
-
-		go func(filename string) {
-			ticker := time.NewTicker(1 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					fi, err := os.Stat(filename)
-					if err == nil {
-						// Clear line by padding with spaces
-						fmt.Printf("\rDownloading... %d bytes      ", fi.Size())
-					}
-				case <-done:
-					fmt.Println("\nDownload completed.")
-					return
-				}
-			}
-		}(localFile)
-
-		fmt.Println("Downloading VHDX file from remote server...")
-		err = scpClient.CopyFromRemote(context.Background(), f, path)
-		if err != nil {
-			log.Fatalf("Failed to copy remote file: %v", err)
-		}
-		close(done) // stop the progress goroutine
-		fmt.Println("\nFile downloaded successfully to", localFile)
-
-		// Step 3: Convert  VHDX to raw
-		cmd := exec.Command(
-			"virt-v2v",
-			"-i", "disk",
-			localFile,
-			"-o", "local",
-			"-of", "raw",
-			"-os", ".",
-		)
-
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		fmt.Println("Converting VHDX to raw format...")
-		if err := cmd.Run(); err != nil {
-			log.Fatalf("VHDX ocnvrsion failed: %v", err)
+		if hyperv.CopyRemoteFileWithProgress(user, password, hostIP, sshPort, remotePath, vmName+".vhdx") != nil {
+			log.Fatalf("SCP transfer failed: %v", err)
 		}
 
-		fmt.Println("VHDX ocnvrsion completed successfully.")
-
-		os.Rename(localFile+"-sda", common.RemoveFileExtension(localFile)+".raw")
-
-		ovaFile, err := ova.FormatFromHyperV(vmMap)
-		if err != nil {
-			log.Fatalf("Failed to format OVF: %s", err)
+		// 7. Convert VHDX to RAW
+		if hyperv.ConvertVHDXToRaw(localFile) != nil {
+			log.Fatalf("Failed to convert VHDX to RAW: %v", err)
 		}
-		if err := os.WriteFile(common.RemoveFileExtension(localFile)+".ovf", ovaFile, 0644); err != nil {
-			log.Fatalf("Failed to write OVF file: %v", err)
+		// 8. Generate OVF
+		if ova.FormatFromHyperV(vmInfoMap, localFile) != nil {
+			log.Fatalf("Failed to format OVF from HyperV VM: %v", err)
 		}
-		fmt.Println("OVF file created successfully: vm-2019.ovf")
 
 	}
-
-}
-
-func getVMNames(client *winrm.Client) ([]string, error) {
-	vmListCommand := `powershell -Command "Get-VM | Select -ExpandProperty Name"`
-	var stdout, stderr bytes.Buffer
-	getVMexitCode, err := client.Run(vmListCommand, &stdout, &stderr)
-	if err != nil {
-		log.Fatalf("Command failed: %s\nSTDERR: %s\nSTDOUT: %s", err, stderr.String(), stdout.String())
-	} else if getVMexitCode != 0 {
-		log.Fatalf("Command exited with code %d: %s\nSTDERR: %s\nSTDOUT: %s", getVMexitCode, err, stderr.String(), stdout.String())
-	}
-	// Split by lines
-	names := strings.Split(strings.TrimSpace(string(stdout.String())), "\n")
-	for i, name := range names {
-		names[i] = strings.TrimSpace(name)
-	}
-	return names, nil
-}
-
-func getVMInfo(client *winrm.Client, vmName string) (interface{}, error) {
-
-	vmInfoCommand := `powershell -Command "Get-VM | ConvertTo-Json -Depth 3"`
-	var stdout, stderr bytes.Buffer
-	getVMexitCode, err := client.Run(vmInfoCommand, &stdout, &stderr)
-	if err != nil {
-		log.Fatalf("Command failed: %s\nSTDERR: %s\nSTDOUT: %s", err, stderr.String(), stdout.String())
-	} else if getVMexitCode != 0 {
-		log.Fatalf("Command exited with code %d: %s\nSTDERR: %s\nSTDOUT: %s", getVMexitCode, err, stderr.String(), stdout.String())
-	}
-
-	var vmInfoMap interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &vmInfoMap); err != nil {
-		log.Fatalf("Failed to parse JSON: %s\nRaw Output:\n%s", err, stdout.String())
-	}
-
-	return vmInfoMap, nil
-}
-
-func GetGuestOSInfoFromVM(client *winrm.Client, vmName, guestUser, guestPassword string) (string, error) {
-	psCmd := fmt.Sprintf(`powershell -Command "$secpasswd = ConvertTo-SecureString '%s' -AsPlainText -Force; $cred = New-Object System.Management.Automation.PSCredential('%s', $secpasswd); Invoke-Command -VMName '%s' -Credential $cred -ScriptBlock { Get-CimInstance Win32_OperatingSystem | Select Caption, Version, OSArchitecture } | ConvertTo-Json -Compress"`,
-		guestPassword, guestUser, vmName)
-
-	var stdout, stderr strings.Builder
-	exitCode, err := client.Run(psCmd, &stdout, &stderr)
-	if err != nil {
-		return "", fmt.Errorf("failed to run command: %w\nstderr: %s", err, stderr.String())
-	}
-	if exitCode != 0 {
-		return "", fmt.Errorf("non-zero exit code: %d\nstderr: %s", exitCode, stderr.String())
-	}
-	return stdout.String(), nil
 }

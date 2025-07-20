@@ -1,7 +1,7 @@
 package osutil
 
 import (
-	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -60,20 +60,21 @@ type GuestOSInfo struct {
 	OSArchitecture string `json:"OSArchitecture"`
 }
 
-func ParseGuestOSInfo(jsonStr string) (map[string]interface{}, error) {
-	var info GuestOSInfo
-	err := json.Unmarshal([]byte(jsonStr), &info)
-	if err != nil {
-		return nil, err
+func ParseGuestOSInfo(data interface{}) (map[string]interface{}, error) {
+	// Expecting the result to be either a map or a list of maps
+	switch v := data.(type) {
+	case map[string]interface{}:
+		return v, nil
+	case []interface{}:
+		if len(v) > 0 {
+			if first, ok := v[0].(map[string]interface{}); ok {
+				return first, nil
+			}
+		}
+		return nil, fmt.Errorf("unexpected list format: %+v", v)
+	default:
+		return nil, fmt.Errorf("unexpected type: %T", v)
 	}
-
-	guestOSMap := map[string]interface{}{
-		"Caption":        info.Caption,
-		"Version":        info.Version,
-		"OSArchitecture": info.OSArchitecture,
-	}
-
-	return guestOSMap, nil
 }
 
 func MapCaptionToOsType(caption, arch string) string {

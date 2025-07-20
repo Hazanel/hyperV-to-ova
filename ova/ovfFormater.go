@@ -3,6 +3,7 @@ package ova
 import (
 	"encoding/xml"
 	"fmt"
+	hyperv "hyperv/common"
 	osutil "hyperv/os"
 	"os"
 	"path/filepath"
@@ -31,11 +32,11 @@ func GetOVFOperatingSystemID(osName string) int {
 	return 1 // Other
 }
 
-func FormatFromHyperV(vm interface{}) ([]byte, error) {
+func FormatFromHyperV(vm interface{}, remptePath string) error {
 
 	vmMap, ok := vm.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("invalid VM format: expected map[string]interface{}")
+		return fmt.Errorf("invalid VM format: expected map[string]interface{}")
 	}
 
 	var (
@@ -48,7 +49,7 @@ func FormatFromHyperV(vm interface{}) ([]byte, error) {
 
 	wd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("cannot get working directory: %w", err)
+		return fmt.Errorf("cannot get working directory: %w", err)
 	}
 
 	// --- CPU ---
@@ -114,7 +115,7 @@ func FormatFromHyperV(vm interface{}) ([]byte, error) {
 			if stat, err := os.Stat(rawDiskPath); err == nil {
 				diskCapacity = stat.Size()
 			} else {
-				return nil, fmt.Errorf("failed to get size of raw disk file %s: %w", rawDiskPath, err)
+				return fmt.Errorf("failed to get size of raw disk file %s: %w", rawDiskPath, err)
 			}
 
 			files = append(files, File{
@@ -243,7 +244,16 @@ func FormatFromHyperV(vm interface{}) ([]byte, error) {
 		},
 	}
 
-	return MarshalOvf(env)
+	ovf, err := MarshalOvf(env)
+	if err != nil {
+		return fmt.Errorf("failed to marshal OVF: %w", err)
+	}
+
+	ovfPath := hyperv.RemoveFileExtension(remptePath) + ".ovf"
+	os.WriteFile(ovfPath, ovf, 0644)
+	fmt.Println("OVF file written to:", ovfPath)
+
+	return nil
 }
 
 func MarshalOvf(env *Envelope) ([]byte, error) {
