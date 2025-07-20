@@ -67,5 +67,5 @@ This tool automates the migration of Windows VMs from **Hyper-V** to **OpenShift
 
 🛠️ Build and Run
    
-    go build -o migrate
-    ./migrate
+    go build -o hyperv ./cmd
+    ./hyperv

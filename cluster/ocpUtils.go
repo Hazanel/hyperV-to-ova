@@ -350,7 +350,7 @@ func extractProgressPercentage(migration *unstructured.Unstructured) string {
 				if total > 0 {
 					percentage = fmt.Sprintf("%d%%", int((completed*100)/total))
 				}
-				if stepName == "Initialize" && stepPhase == "Completed" {
+				if stepPhase == "Completed" {
 					percentage = "100%"
 				}
 				sb.WriteString(fmt.Sprintf("  Step: %s | %s | Progress: %s\n", stepName, stepPhase, percentage))

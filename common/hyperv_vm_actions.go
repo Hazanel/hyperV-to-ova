@@ -77,7 +77,7 @@ func runPSCommand(client *winrm.Client, baseCommand string, opts PSOptions) (int
 }
 
 func performVMAction(client *winrm.Client, vmName string, action VMAction) error {
-	fmt.Printf("Executing VM action: %s on '%s'\n", action, vmName)
+	fmt.Printf("Executing VM action: %s on '%s'\n", strings.Fields(string(action))[0], vmName)
 
 	cmd := fmt.Sprintf(string(action), vmName)
 	_, err := runPSCommand(client, cmd, PSOptions{})
