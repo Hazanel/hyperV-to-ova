@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	ocp "hyperv/cluster"
 	hyperv "hyperv/common"
 	osutil "hyperv/os"
 	"hyperv/ova"
 	"log"
+	"time"
 )
 
 //Make sure to have quemu installed:
@@ -34,6 +36,7 @@ import (
 const savejsonfile bool = false
 
 func main() {
+
 	client, hostIP, sshPort, user, password, err := hyperv.LoadHyperVConnection()
 	if err != nil {
 		log.Fatalf("Connection setup failed: %v", err)
@@ -106,4 +109,91 @@ func main() {
 		}
 
 	}
+
+	if err := ocp.LoginToCluster(); err != nil {
+		log.Fatalf("Cluster login failed: %v", err)
+	}
+	namespace := "openshift-mtv"
+	providerName := "ova-provider-test"
+	secretName := "ova-provider-bzhf8"
+	secretNamespace := "openshift-mtv"
+	nfsURL := "10.8.3.97:/srv/www/html/v2v-image/mtv/elad"
+	yamlFile := "ova-provider.yaml"
+	migrationName := "hyperv-demo"
+
+	err = ocp.CreateOvaProviderYaml(namespace, providerName, secretName, secretNamespace, nfsURL, yamlFile)
+	if err != nil {
+		log.Fatalf("Failed to create Provider yaml: %v", err)
+	}
+
+	// Apply the YAML
+	if err := ocp.ApplyYaml(yamlFile); err != nil {
+		log.Fatalf("Failed to apply Provider yaml: %v", err)
+	}
+
+	err = ocp.CreateStorageMapYaml(
+		"storage-map.yaml",
+		"ova-storage-map",
+		"openshift-mtv",
+		"ova-provider",
+		"host",
+		"2064f8686d4d7bbc79c201ea82518f263baa", // source ID
+		"nfs-csi",                              // dest SC
+	)
+	if err != nil {
+		log.Fatalf("failed to write storage map: %v", err)
+	}
+
+	if err := ocp.ApplyYamlFile("storage-map.yaml"); err != nil {
+		log.Fatalf("failed to apply storage map: %v", err)
+	}
+	err = ocp.CreateNetworkMapYaml(
+		"network-map.yaml",
+		"ova-network-map",
+		"openshift-mtv",
+		"ova-provider",
+		"host",
+		"d722072e029481b6ca769f17e8fc112a9f30", // source network ID
+		"Network Adapter",                      // source network name
+		"pod",                                  // destination type: pod, multus, etc.
+	)
+	if err != nil {
+		log.Fatalf("failed to write network map: %v", err)
+	}
+	if err = ocp.ApplyYamlFile("network-map.yaml"); err != nil {
+		log.Fatalf("failed to apply network map: %v", err)
+	}
+	err = ocp.CreateMigrationPlanYaml(
+		"openshift-mtv",
+		"ovatohyper",
+		"ova-provider",
+		"host",
+		"ova-network-map",
+		"ova-storage-map",
+		"42a55f0071494abc8e598aa681d1e821f73b",
+		"v-2019",
+		"plan.yaml",
+	)
+	err = ocp.ApplyYamlFile("plan.yaml")
+	if err != nil {
+		fmt.Printf("Failed to apply plan: %v\n", err)
+	}
+
+	migrationYaml := "migration.yaml"
+	err = ocp.CreateMigrationYaml(migrationYaml, "hyperv-demo", "openshift-mtv", "ovatohyper", "openshift-mtv")
+	if err != nil {
+		log.Fatalf("Failed to create migration yaml: %v", err)
+	}
+	if err = ocp.ApplyYaml(migrationYaml); err != nil {
+		log.Fatalf("Failed to apply migration yaml: %v", err)
+	}
+
+	timeout := 30 * time.Minute
+
+	fmt.Printf("Waiting for migration %s to complete...\n", migrationName)
+	if err := ocp.WaitForMigrationComplete(namespace, migrationName, timeout); err != nil {
+		log.Fatalf("Migration monitoring failed: %v", err)
+	}
+
+	fmt.Println("Migration completed successfully!")
 }

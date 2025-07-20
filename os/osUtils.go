@@ -2,7 +2,18 @@ package osutil
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 // Map OS names (lowercase) to OVF OS IDs
@@ -191,4 +202,195 @@ func MapCaptionToOsType(caption, arch string) string {
 	default:
 		return "otherGuest"
 	}
+}
+
+// Checks if a path is on a mounted filesystem (Linux only)
+func isMounted(path string) (bool, error) {
+	// Resolve to absolute path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+
+	var statfs syscall.Statfs_t
+	if err := syscall.Statfs(absPath, &statfs); err != nil {
+		return false, err
+	}
+
+	// On Linux, Type 0x6969 is NFS, 0xEF53 is ext2/3/4, etc.
+	// But here, we'll check if path exists and is accessible; if Statfs succeeds, it's mounted.
+	// To be more precise, you might compare device IDs with /etc/mtab, but this is a simpler heuristic.
+	return true, nil
+}
+
+type ProgressReader struct {
+	Reader     io.Reader
+	Total      int64
+	ReadSoFar  int64
+	lastUpdate time.Time
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	pr.ReadSoFar += int64(n)
+
+	if time.Since(pr.lastUpdate) > 100*time.Millisecond {
+		pr.printProgress()
+		pr.lastUpdate = time.Now()
+	}
+	return n, err
+}
+
+func (pr *ProgressReader) printProgress() {
+	percent := float64(pr.ReadSoFar) / float64(pr.Total) * 100
+	fmt.Printf("\rCopying... %.2f%% (%d / %d bytes)", percent, pr.ReadSoFar, pr.Total)
+}
+
+func CopyFile(srcPath, dstPath string) error {
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dstFile.Close()
+
+	// Try sendfile on Linux
+	if runtime.GOOS == "linux" {
+		err := copyFileEfficient(srcFile, dstFile)
+		if err == nil {
+			fmt.Printf("Copied %s to %s using sendfile\n", srcPath, dstPath)
+			return nil
+		}
+		fmt.Printf("sendfile failed, falling back to io.Copy: %v\n", err)
+	}
+
+	// Fall back to io.Copy with progress
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat source file: %w", err)
+	}
+	totalSize := srcInfo.Size()
+
+	progressReader := &ProgressReader{
+		Reader: srcFile,
+		Total:  totalSize,
+	}
+
+	_, err = io.Copy(dstFile, progressReader)
+	fmt.Println() // newline after final progress
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	fmt.Printf("Copied %s to %s\n", srcPath, dstPath)
+	return nil
+}
+
+func copyFileEfficient(srcFile, dstFile *os.File) error {
+	srcFd := int(srcFile.Fd())
+	dstFd := int(dstFile.Fd())
+
+	info, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+
+	var offset int64 = 0
+	const chunkSize = 32 * 1024 * 1024 // 32MB
+
+	start := time.Now()
+	for offset < size {
+		remain := size - offset
+		chunk := int(remain)
+		if chunk > chunkSize {
+			chunk = chunkSize
+		}
+
+		n, err := unix.Sendfile(dstFd, srcFd, &offset, chunk)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+
+		offset += int64(n)
+		printProgress(offset, size)
+	}
+	fmt.Print("\r") // clear progress line
+	fmt.Printf("Copied using sendfile in %v\n", time.Since(start))
+	return nil
+}
+
+func printProgress(done, total int64) {
+	percent := float64(done) / float64(total) * 100
+	fmt.Printf("\rCopying... %d/%d bytes (%.2f%%)", done, total, percent)
+}
+
+// CopyFilesInDir copies all .raw and .ovf files from output dir to nfs server
+func CopyFilesNfsServer(srcDir, dstDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			// skip inaccessible files/directories
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if ext != ".raw" && ext != ".ovf" {
+			return nil
+		}
+
+		dstPath := filepath.Join(dstDir, d.Name())
+		if err := CopyFile(path, dstPath); err != nil {
+			return err
+		}
+
+		log.Printf("Copied %s to %s", path, dstPath)
+		return nil
+	})
+}
+
+// runCopyWithSudo runs the current program itself with sudo and a special flag
+func RunCopyWithSudo(srcDir, dstDir, sudoPassword string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	fmt.Printf("Executing: sudo -S  %s --copy-files %s %s\n", self, srcDir, dstDir)
+
+	cmd := exec.Command("sudo", "-S", self, "--copy-files", srcDir, dstDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	go func() {
+		defer stdin.Close()
+		io.WriteString(stdin, sudoPassword+"\n")
+	}()
+
+	return cmd.Run()
+}
+
+func PromptPassword() (string, error) {
+	fmt.Print("Enter sudo password: ")
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println() // for newline after password input
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	return string(bytePassword), nil
 }

@@ -1,4 +1,4 @@
-package clusterlogin
+package ocp
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ func LoginToCluster() error {
 	if mountBasePath == "" {
 		return fmt.Errorf("mount base path is required")
 	}
-	nfsServerPath := os.Getenv("NFS_SERVER_PATH")
+	nfsServerPath := os.Getenv("CLUSTER_NFS_SERVER_PATH")
 	if nfsServerPath == "" {
 		return fmt.Errorf("NFS server path is required")
 	}
