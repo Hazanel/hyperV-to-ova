@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 //Make sure to have quemu installed:
@@ -38,12 +39,13 @@ const savejsonfile bool = false
 
 func main() {
 
-	client, hostIP, sshPort, user, password, err := hyperv.LoadHyperVConnection()
+	connections, err := hyperv.LoadHyperVConnection()
 	if err != nil {
 		log.Fatalf("Connection setup failed: %v", err)
 	}
 
-	vmNames, err := hyperv.PerformVMAction(client, "", hyperv.ListVMs)
+	// Get vm list
+	vmNames, err := hyperv.PerformVMAction(connections.Client, "", hyperv.ListVMs)
 	if err != nil {
 		log.Fatalf("Failed to list VMs: %v", err)
 	}
@@ -62,66 +64,84 @@ func main() {
 	}
 	names := vmNames.([]string)
 
+	var wg sync.WaitGroup
 	for _, vmName := range names {
-		fmt.Printf("Fetching info for VM: %s\n", vmName)
+		wg.Add(1)
 
-		// 2. Fetch full VM info
-		infoResult, err := hyperv.PerformVMAction(client, vmName, hyperv.GetVMInfo)
-		if err != nil {
-			log.Printf("Failed to get VM info: %v", err)
-			continue
-		}
+		go func(vmName string) {
+			defer wg.Done()
 
-		vmInfoMap := infoResult.(map[string]interface{})
+			fmt.Printf("Fetching info for VM: %s\n", vmName)
 
-		// 3. Extract VHDX path
-		remotePath, _ := hyperv.ExtractPath(vmInfoMap)
-		if remotePath == "" {
-			log.Fatalf("No VHDX path found in VM data")
-		}
-
-		// 4. Get Guest OS Info
-		guestInfoJson, err := hyperv.GetGuestOSInfoFromVM(client, vmName, user, password)
-		if err != nil {
-			log.Printf("VM '%s' may be OFF or unreachable: %v", vmName, err)
-			continue
-		}
-		guestOSMap, err := osutil.ParseGuestOSInfo(guestInfoJson)
-		if err != nil {
-			log.Fatalf("Failed to parse guest OS info: %v", err)
-		}
-		vmInfoMap["GuestOSInfo"] = guestOSMap
-
-		// 5. Shutdown VM
-		fmt.Printf("Shutting down VM '%s'...\n", vmName)
-		if _, err := hyperv.PerformVMAction(client, vmName, hyperv.Shutdown); err != nil {
-			log.Fatalf("Failed to shut down VM: %v", err)
-		}
-
-		if savejsonfile {
-			jsonOut, _ := json.MarshalIndent(infoResult, "", "  ")
-
-			if err := hyperv.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
-				log.Fatalf("%v", err)
+			// Get VM info
+			infoResult, err := hyperv.PerformVMAction(connections.Client, vmName, hyperv.GetVMInfo)
+			if err != nil {
+				log.Printf("Failed to get VM info: %v", err)
+				return
 			}
-		}
 
-		localFile := filepath.Join(outputDir, vmName+".vhdx")
+			vmInfoMap := infoResult.(map[string]interface{})
 
-		if hyperv.CopyRemoteFileWithProgress(user, password, hostIP, sshPort, remotePath, localFile) != nil {
-			log.Fatalf("SCP transfer failed: %v", err)
-		}
+			// Extract dislk path from guest vm
+			remotePath, _ := hyperv.ExtractPath(vmInfoMap)
+			if remotePath == "" {
+				log.Printf("No VHDX path found in VM data for %s", vmName)
+				return
+			}
 
-		// 7. Convert VHDX to RAW
-		if err = hyperv.ConvertVHDXToRaw(localFile); err != nil {
-			log.Fatalf("Failed to convert VHDX to RAW: %v", err)
-		}
-		// 8. Generate OVF
-		if err = ova.FormatFromHyperV(vmInfoMap, localFile); err != nil {
-			log.Fatalf("Failed to format OVF from HyperV VM: %v", err)
-		}
+			//Get guest OS info
+			guestInfoJson, err := hyperv.GetGuestOSInfoFromVM(connections.Client, vmName, connections.User, connections.Password)
+			if err != nil {
+				log.Printf("VM '%s' may be OFF or unreachable: %v", vmName, err)
+				return
+			}
 
+			guestOSMap, err := osutil.ParseGuestOSInfo(guestInfoJson)
+			if err != nil {
+				log.Printf("Failed to parse guest OS info for %s: %v", vmName, err)
+				return
+			}
+			vmInfoMap["GuestOSInfo"] = guestOSMap
+
+			// Perform VM action: shutdown
+			fmt.Printf("Shutting down VM '%s'...\n", vmName)
+			if _, err := hyperv.PerformVMAction(connections.Client, vmName, hyperv.Shutdown); err != nil {
+				log.Printf("Failed to shut down VM %s: %v", vmName, err)
+				return
+			}
+
+			if savejsonfile {
+				jsonOut, _ := json.MarshalIndent(infoResult, "", "  ")
+				if err := hyperv.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
+					log.Printf("Failed to save JSON for %s: %v", vmName, err)
+					return
+				}
+			}
+
+			// Copy remote file disk with progress
+			localFile := filepath.Join(outputDir, vmName+".vhdx")
+			if err := hyperv.CopyRemoteFileWithProgress(connections.User, connections.Password,
+				connections.HostIP, connections.SSHPort, remotePath, localFile); err != nil {
+				log.Printf("SCP transfer failed for %s: %v", vmName, err)
+				return
+			}
+
+			// Convert VHDX to raw format
+			if err := hyperv.ConvertVHDXToRaw(localFile); err != nil {
+				log.Printf("Failed to convert VHDX for %s: %v", vmName, err)
+				return
+			}
+
+			// Format as OVA
+			if err := ova.FormatFromHyperV(vmInfoMap, localFile); err != nil {
+				log.Printf("Failed to format OVF for %s: %v", vmName, err)
+				return
+			}
+
+		}(vmName) // capture loop variable
 	}
+	wg.Wait()
+	fmt.Println("All VMs processed successfully.")
 
 	if err := ocp.LoginToCluster(); err != nil {
 		log.Fatalf("Cluster login failed: %v", err)

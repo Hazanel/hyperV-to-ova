@@ -102,6 +102,27 @@ spec:
   url: '{{.NFSURL}}'
 `
 
+const secretTemplate = `apiVersion: v1
+kind: Secret
+metadata:
+  name: {{.SecretName}}
+  namespace: {{.Namespace}}
+  labels:
+    createdForProviderType: ova
+    createdForResourceType: providers
+type: Opaque
+data:
+  url: {{.UrlBase64}}
+  insecureSkipVerify: {{.InsecureSkipVerifyBase64}}
+`
+
+type SecretData struct {
+	SecretName               string
+	Namespace                string
+	UrlBase64                string
+	InsecureSkipVerifyBase64 string
+}
+
 type OvaProviderData struct {
 	Namespace       string
 	ProviderName    string

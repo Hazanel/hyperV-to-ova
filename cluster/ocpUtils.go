@@ -3,6 +3,7 @@ package ocp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,13 +23,8 @@ import (
 )
 
 const (
-	ovaProviderYaml    = "ova-provider.yaml"
-	storageMapYaml     = "storage-map.yaml"
-	networkMapYaml     = "network-map.yaml"
-	migrationPlanYaml  = "plan.yaml"
-	migrationYaml      = "migration.yaml"
 	providerName       = "ova-provider-test"
-	secretName         = "ova-provider-bzhf8"
+	secretName         = "ova-provider-lbmst"
 	migrationName      = "hyperv-demo"
 	planName           = "ovatohyper"
 	sourceProviderType = "host"
@@ -249,6 +245,17 @@ func createNetworkMapYaml(
 
 }
 
+func createOvaSecretYaml(secretName, namespace, url string, insecureSkipVerify bool, filename string) error {
+	secretData := SecretData{
+		SecretName:               secretName,
+		Namespace:                namespace,
+		UrlBase64:                base64.StdEncoding.EncodeToString([]byte(url)),
+		InsecureSkipVerifyBase64: base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%t", insecureSkipVerify))),
+	}
+
+	return writeTemplateToFile("secret", secretTemplate, secretData, filename)
+}
+
 func waitForMigrationComplete(namespace, migrationName string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -448,6 +455,7 @@ func RunOvaMigration(vmName, outputDir string) error {
 	networkMapYaml := filepath.Join(outputDir, "network-map.yaml")
 	migrationPlanYaml := filepath.Join(outputDir, "plan.yaml")
 	migrationYaml := filepath.Join(outputDir, "migration.yaml")
+	secretYaml := filepath.Join(outputDir, "ova-secret.yaml")
 
 	if namespace == "" {
 		return fmt.Errorf("NAMESPACE environment variable not set")
@@ -456,11 +464,11 @@ func RunOvaMigration(vmName, outputDir string) error {
 		return fmt.Errorf("OVA_PROVIDER_NFS_SERVER_PATH environment variable not set")
 	}
 
-	if err := createOvaProviderYaml(namespace, providerName, secretName, secretNamespace, nfsURL, ovaProviderYaml); err != nil {
-		return fmt.Errorf("failed to create provider YAML: %w", err)
+	if err := createOvaSecretYaml(secretName, secretNamespace, nfsURL, false, secretYaml); err != nil {
+		return fmt.Errorf("failed to create secret YAML: %w", err)
 	}
-	if err := applyYaml(ovaProviderYaml); err != nil {
-		return fmt.Errorf("failed to apply provider YAML: %w", err)
+	if err := applyYaml(secretYaml); err != nil {
+		return fmt.Errorf("failed to apply secret YAML: %w", err)
 	}
 
 	if err := createStorageMapYaml(storageMapYaml, storageMapName, namespace, providerName, sourceProviderType, sourceStorageID, destStorageClass); err != nil {
@@ -476,6 +484,15 @@ func RunOvaMigration(vmName, outputDir string) error {
 	if err := applyYamlFile(networkMapYaml); err != nil {
 		return fmt.Errorf("failed to apply network map YAML: %w", err)
 	}
+
+	if err := createOvaProviderYaml(namespace, providerName, secretName, secretNamespace, nfsURL, ovaProviderYaml); err != nil {
+		return fmt.Errorf("failed to create provider YAML: %w", err)
+	}
+	if err := applyYaml(ovaProviderYaml); err != nil {
+		return fmt.Errorf("failed to apply provider YAML: %w", err)
+	}
+
+	time.Sleep(15 * time.Second) // make sure the provider is ready
 
 	if err := createMigrationPlanYaml(namespace, planName, providerName, sourceProviderType, networkMapName, storageMapName, vmID, vmName, migrationPlanYaml); err != nil {
 		return fmt.Errorf("failed to create migration plan YAML: %w", err)

@@ -39,6 +39,14 @@ type PSOptions struct {
 	AsJSON    bool
 }
 
+type HyperVConnection struct {
+	Client   *winrm.Client
+	HostIP   string
+	SSHPort  string
+	User     string
+	Password string
+}
+
 func runPSCommand(client *winrm.Client, baseCommand string, opts PSOptions) (interface{}, error) {
 	var psCommand string
 
@@ -196,41 +204,41 @@ func showProgress(filename string, done <-chan struct{}) {
 // - host IP
 // - SSH host string (ip:port)
 // - user and password
-func LoadHyperVConnection() (*winrm.Client, string, string, string, string, error) {
+func LoadHyperVConnection() (*HyperVConnection, error) {
 	if err := godotenv.Load(); err != nil {
-		return nil, "", "", "", "", fmt.Errorf("error loading .env file: %w", err)
+		return nil, fmt.Errorf("error loading .env file: %w", err)
 	}
 
-	// Load and validate required environment variables
 	user := os.Getenv("HYPERV_USER")
 	password := os.Getenv("HYPERV_PASS")
 	hostIP := os.Getenv("HYPERV_HOST")
-
-	if user == "" || password == "" || hostIP == "" {
-		return nil, "", "", "", "", fmt.Errorf("missing credentials in environment (HYPERV_USER/HYPERV_PASS/HYPERV_HOST)")
-	}
-
 	winrmPortStr := os.Getenv("HYPERV_PORT")
-	if winrmPortStr == "" {
-		return nil, "", "", "", "", fmt.Errorf("missing HYPERV_PORT in environment")
-	}
-
-	winrmPort, err := strconv.Atoi(winrmPortStr)
-	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("invalid HYPERV_PORT: %v", err)
-	}
-
 	sshPort := os.Getenv("SSH_PORT")
 	if sshPort == "" {
 		sshPort = "22"
 	}
 
+	if user == "" || password == "" || hostIP == "" || winrmPortStr == "" {
+		return nil, fmt.Errorf("missing credentials in environment (HYPERV_USER/HYPERV_PASS/HYPERV_HOST/HYPERV_PORT)")
+	}
+
+	winrmPort, err := strconv.Atoi(winrmPortStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HYPERV_PORT: %v", err)
+	}
+
 	endpoint := winrm.NewEndpoint(hostIP, winrmPort, false, false, nil, nil, nil, 0)
 	client, err := winrm.NewClient(endpoint, user, password)
 	if err != nil {
-		return nil, "", "", "", "", fmt.Errorf("failed to create WinRM client: %v", err)
+		return nil, fmt.Errorf("failed to create WinRM client: %v", err)
 	}
 
 	fmt.Printf("Connected to Hyper-V at %s (SSH) and WinRM port %d\n", hostIP, winrmPort)
-	return client, hostIP, sshPort, user, password, nil
+	return &HyperVConnection{
+		Client:   client,
+		HostIP:   hostIP,
+		SSHPort:  sshPort,
+		User:     user,
+		Password: password,
+	}, nil
 }
