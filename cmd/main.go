@@ -8,7 +8,8 @@ import (
 	osutil "hyperv/os"
 	"hyperv/ova"
 	"log"
-	"time"
+	"os"
+	"path/filepath"
 )
 
 //Make sure to have quemu installed:
@@ -47,6 +48,18 @@ func main() {
 		log.Fatalf("Failed to list VMs: %v", err)
 	}
 
+	outputDir, err := filepath.Abs("output")
+	if err != nil {
+		log.Fatalf("Failed to get absolute path for output directory: %v", err)
+	}
+
+	// If "cmd" is in the path, remove it to get project root output
+	if filepath.Base(filepath.Dir(outputDir)) == "cmd" {
+		outputDir = filepath.Join(filepath.Dir(filepath.Dir(outputDir)), "output")
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		log.Fatalf("failed to create output directory: %v", err)
+	}
 	names := vmNames.([]string)
 
 	for _, vmName := range names {
@@ -93,18 +106,18 @@ func main() {
 			}
 		}
 
-		localFile := vmName + ".vhdx"
+		localFile := filepath.Join(outputDir, vmName+".vhdx")
 
-		if hyperv.CopyRemoteFileWithProgress(user, password, hostIP, sshPort, remotePath, vmName+".vhdx") != nil {
+		if hyperv.CopyRemoteFileWithProgress(user, password, hostIP, sshPort, remotePath, localFile) != nil {
 			log.Fatalf("SCP transfer failed: %v", err)
 		}
 
 		// 7. Convert VHDX to RAW
-		if hyperv.ConvertVHDXToRaw(localFile) != nil {
+		if err = hyperv.ConvertVHDXToRaw(localFile); err != nil {
 			log.Fatalf("Failed to convert VHDX to RAW: %v", err)
 		}
 		// 8. Generate OVF
-		if ova.FormatFromHyperV(vmInfoMap, localFile) != nil {
+		if err = ova.FormatFromHyperV(vmInfoMap, localFile); err != nil {
 			log.Fatalf("Failed to format OVF from HyperV VM: %v", err)
 		}
 
@@ -113,87 +126,8 @@ func main() {
 	if err := ocp.LoginToCluster(); err != nil {
 		log.Fatalf("Cluster login failed: %v", err)
 	}
-	namespace := "openshift-mtv"
-	providerName := "ova-provider-test"
-	secretName := "ova-provider-bzhf8"
-	secretNamespace := "openshift-mtv"
-	nfsURL := "10.8.3.97:/srv/www/html/v2v-image/mtv/elad"
-	yamlFile := "ova-provider.yaml"
-	migrationName := "hyperv-demo"
 
-	err = ocp.CreateOvaProviderYaml(namespace, providerName, secretName, secretNamespace, nfsURL, yamlFile)
-	if err != nil {
-		log.Fatalf("Failed to create Provider yaml: %v", err)
+	if err := ocp.RunOvaMigration(names[0], outputDir); err != nil {
+		log.Fatalf("Migration failed: %v", err)
 	}
-
-	// Apply the YAML
-	if err := ocp.ApplyYaml(yamlFile); err != nil {
-		log.Fatalf("Failed to apply Provider yaml: %v", err)
-	}
-
-	err = ocp.CreateStorageMapYaml(
-		"storage-map.yaml",
-		"ova-storage-map",
-		"openshift-mtv",
-		"ova-provider",
-		"host",
-		"2064f8686d4d7bbc79c201ea82518f263baa", // source ID
-		"nfs-csi",                              // dest SC
-	)
-	if err != nil {
-		log.Fatalf("failed to write storage map: %v", err)
-	}
-
-	if err := ocp.ApplyYamlFile("storage-map.yaml"); err != nil {
-		log.Fatalf("failed to apply storage map: %v", err)
-	}
-	err = ocp.CreateNetworkMapYaml(
-		"network-map.yaml",
-		"ova-network-map",
-		"openshift-mtv",
-		"ova-provider",
-		"host",
-		"d722072e029481b6ca769f17e8fc112a9f30", // source network ID
-		"Network Adapter",                      // source network name
-		"pod",                                  // destination type: pod, multus, etc.
-	)
-	if err != nil {
-		log.Fatalf("failed to write network map: %v", err)
-	}
-	if err = ocp.ApplyYamlFile("network-map.yaml"); err != nil {
-		log.Fatalf("failed to apply network map: %v", err)
-	}
-	err = ocp.CreateMigrationPlanYaml(
-		"openshift-mtv",
-		"ovatohyper",
-		"ova-provider",
-		"host",
-		"ova-network-map",
-		"ova-storage-map",
-		"42a55f0071494abc8e598aa681d1e821f73b",
-		"v-2019",
-		"plan.yaml",
-	)
-	err = ocp.ApplyYamlFile("plan.yaml")
-	if err != nil {
-		fmt.Printf("Failed to apply plan: %v\n", err)
-	}
-
-	migrationYaml := "migration.yaml"
-	err = ocp.CreateMigrationYaml(migrationYaml, "hyperv-demo", "openshift-mtv", "ovatohyper", "openshift-mtv")
-	if err != nil {
-		log.Fatalf("Failed to create migration yaml: %v", err)
-	}
-	if err = ocp.ApplyYaml(migrationYaml); err != nil {
-		log.Fatalf("Failed to apply migration yaml: %v", err)
-	}
-
-	timeout := 30 * time.Minute
-
-	fmt.Printf("Waiting for migration %s to complete...\n", migrationName)
-	if err := ocp.WaitForMigrationComplete(namespace, migrationName, timeout); err != nil {
-		log.Fatalf("Migration monitoring failed: %v", err)
-	}
-
-	fmt.Println("Migration completed successfully!")
 }

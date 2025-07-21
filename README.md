@@ -1,6 +1,6 @@
 # 🛠️ Hyper-V to OpenShift 
 
-This tool automates the migration of Windows VMs from **Hyper-V** to **OpenShift Virtualization** using **Konveyor Forklift**. It connects to Hyper-V , extracts VM metadata, converts `.vhdx` disks to `.raw`, generates OVF files, and applies the migration plan to OpenShift.
+This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtualization**. It connects to Hyper-V , extracts VM metadata, converts `.vhdx` disks to `.raw`, generates OVF files, and applies the migration plan to OpenShift.
 
 ---
 
@@ -63,6 +63,23 @@ This tool automates the migration of Windows VMs from **Hyper-V** to **OpenShift
     Set-Service -Name sshd -StartupType 'Automatic'
     New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
 
+🔧 Environment Variables
+    
+    Set the following environment variables before running the tool:
+
+    HYPERV_USER=
+    HYPERV_PASS=
+    HYPERV_HOST=
+    HYPERV_PORT=5985
+    SSH_PORT=22
+
+    CLUSTER_NAME=
+    MOUNT_BASH_PATH=
+    CLUSTER_NFS_SERVER_PATH=
+    OVA_PROVIDER_NFS_SERVER_PATH=
+    NAMESPACE=
+
+    You can export them into your shell or store in a .env file and load using source .env.
 
 
 🛠️ Build and Run

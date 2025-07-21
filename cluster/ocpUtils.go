@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +19,24 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+)
+
+const (
+	ovaProviderYaml    = "ova-provider.yaml"
+	storageMapYaml     = "storage-map.yaml"
+	networkMapYaml     = "network-map.yaml"
+	migrationPlanYaml  = "plan.yaml"
+	migrationYaml      = "migration.yaml"
+	providerName       = "ova-provider-test"
+	secretName         = "ova-provider-bzhf8"
+	migrationName      = "hyperv-demo"
+	planName           = "ovatohyper"
+	sourceProviderType = "host"
+	networkMapName     = "ova-network-map"
+	storageMapName     = "ova-storage-map"
+	sourceNetworkName  = "Network Adapter"
+	destStorageClass   = "nfs-csi"
+	destNetworkType    = "pod"
 )
 
 type PlanStatus struct {
@@ -30,6 +49,19 @@ type PlanStatus struct {
 	} `json:"conditions"`
 }
 
+type MigrationStatus struct {
+	Phase      string `json:"phase"`
+	Conditions []struct {
+		Type    string `json:"type"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason,omitempty"`
+		Message string `json:"message,omitempty"`
+	} `json:"conditions"`
+}
+
+type Migration struct {
+	Status MigrationStatus `json:"status"`
+}
 type Plan struct {
 	Status PlanStatus `json:"status"`
 }
@@ -46,12 +78,12 @@ func WaitForPlanReady(namespace, planName string, timeout time.Duration) error {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for plan %s to be ready", planName)
 		case <-ticker.C:
-			plan, err := GetPlan(namespace, planName)
+			plan, err := getPlan(namespace, planName)
 			if err != nil {
 				return fmt.Errorf("failed to get plan: %w", err)
 			}
 
-			if IsPlanReady(plan) {
+			if isPlanReady(plan) {
 				return nil
 			}
 			fmt.Println("Plan not ready yet, waiting...")
@@ -60,7 +92,7 @@ func WaitForPlanReady(namespace, planName string, timeout time.Duration) error {
 }
 
 // Use kubectl to fetch the plan
-func GetPlan(namespace, name string) (*Plan, error) {
+func getPlan(namespace, name string) (*Plan, error) {
 	cmd := exec.Command("kubectl", "get", "plan", name, "-n", namespace, "-o", "json")
 	out, err := cmd.Output()
 	if err != nil {
@@ -74,7 +106,7 @@ func GetPlan(namespace, name string) (*Plan, error) {
 	return &plan, nil
 }
 
-func IsPlanReady(plan *Plan) bool {
+func isPlanReady(plan *Plan) bool {
 	// Check phase or conditions for readiness, for example:
 	if plan.Status.Phase == "Ready" {
 		return true
@@ -87,98 +119,7 @@ func IsPlanReady(plan *Plan) bool {
 	return false
 }
 
-func CreateOvaProviderYaml(
-	namespace, providerName, secretName, secretNamespace, nfsURL, filename string,
-) error {
-	content := fmt.Sprintf(`apiVersion: forklift.konveyor.io/v1beta1
-kind: Provider
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  secret:
-    name: %s
-    namespace: %s
-  type: ova
-  url: '%s'
-`, providerName, namespace, secretName, secretNamespace, nfsURL)
-
-	return os.WriteFile(filename, []byte(content), 0644)
-}
-
-func CreateMigrationPlanYaml(
-	namespace, planName, sourceProvider, destProvider, networkMap, storageMap, vmID, vmName, filename string,
-) error {
-	content := fmt.Sprintf(`apiVersion: forklift.konveyor.io/v1beta1
-kind: Plan
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  provider:
-    source:
-      apiVersion: forklift.konveyor.io/v1beta1
-      kind: Provider
-      name: %s
-      namespace: %s
-    destination:
-      apiVersion: forklift.konveyor.io/v1beta1
-      kind: Provider
-      name: %s
-      namespace: %s
-  map:
-    network:
-      apiVersion: forklift.konveyor.io/v1beta1
-      kind: NetworkMap
-      name: %s
-      namespace: %s
-    storage:
-      apiVersion: forklift.konveyor.io/v1beta1
-      kind: StorageMap
-      name: %s
-      namespace: %s
-  targetNamespace: %s
-  pvcNameTemplateUseGenerateName: true
-  skipGuestConversion: false
-  warm: false
-  migrateSharedDisks: true
-  vms:
-    - id: %s
-      name: %s
-`, planName, namespace,
-		sourceProvider, namespace,
-		destProvider, namespace,
-		networkMap, namespace,
-		storageMap, namespace,
-		namespace,
-		vmID, vmName)
-
-	return os.WriteFile(filename, []byte(content), 0644)
-}
-
-func runMigrationAndWait(namespace, migrationName string, timeout time.Duration) error {
-	err := ApplyYaml(fmt.Sprintf("/tmp/%s.yaml", migrationName)) // your helper to kubectl apply migration yaml
-	if err != nil {
-		return fmt.Errorf("failed to apply migration: %w", err)
-	}
-	return WaitForMigrationComplete(namespace, migrationName, timeout) // your existing function
-}
-func CreateMigrationYaml(filename, migrationName, namespace, planName, planNamespace string) error {
-	content := fmt.Sprintf(`apiVersion: forklift.konveyor.io/v1beta1
-kind: Migration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  plan:
-    name: %s
-    namespace: %s
-`, migrationName, namespace, planName, planNamespace)
-
-	return os.WriteFile(filename, []byte(content), 0644)
-}
-
-func ApplyYamlFile(filename string) error {
+func applyYamlFile(filename string) error {
 	cmd := exec.Command("kubectl", "apply", "-f", filename)
 
 	var stderr bytes.Buffer
@@ -192,14 +133,78 @@ func ApplyYamlFile(filename string) error {
 	return nil
 }
 
-func ApplyYaml(filename string) error {
+func applyYaml(filename string) error {
 	cmd := exec.Command("oc", "apply", "-f", filename)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func CreateStorageMapYaml(
+func writeTemplateToFile(templateName, templateContent string, data any, filename string) error {
+	tmpl, err := template.New(templateName).Parse(templateContent)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Create(filename)
+
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return tmpl.Execute(file, data)
+}
+
+func createOvaProviderYaml(
+	namespace, providerName, secretName, secretNamespace, nfsURL, filename string,
+) error {
+	data := OvaProviderData{
+		Namespace:       namespace,
+		ProviderName:    providerName,
+		SecretName:      secretName,
+		SecretNamespace: secretNamespace,
+		NFSURL:          nfsURL,
+	}
+
+	return writeTemplateToFile("ovaProvider", ovaProviderTemplate, data, filename)
+}
+
+func createMigrationPlanYaml(
+	namespace, planName, sourceProvider, destProvider, networkMap, storageMap, vmID, vmName, filename string,
+) error {
+	data := MigrationPlanData{
+		Namespace:      namespace,
+		PlanName:       planName,
+		SourceProvider: sourceProvider,
+		DestProvider:   destProvider,
+		NetworkMap:     networkMap,
+		StorageMap:     storageMap,
+		VMID:           vmID,
+		VMName:         vmName,
+	}
+
+	return writeTemplateToFile("migrationPlan", migrationPlanTemplate, data, filename)
+}
+
+func createMigrationYaml(
+	filename string,
+	migrationName string,
+	namespace string,
+	planName string,
+	planNamespace string,
+) error {
+	data := MigrationData{
+		MigrationName: migrationName,
+		Namespace:     namespace,
+		PlanName:      planName,
+		PlanNamespace: planNamespace,
+	}
+
+	return writeTemplateToFile("migration", migrationTemplate, data, filename)
+}
+
+func createStorageMapYaml(
 	filename string,
 	mapName string,
 	namespace string,
@@ -208,31 +213,19 @@ func CreateStorageMapYaml(
 	sourceStorageID string,
 	destinationStorageClass string,
 ) error {
-	content := fmt.Sprintf(`apiVersion: forklift.konveyor.io/v1beta1
-kind: StorageMap
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  map:
-    - source:
-        id: %s
-      destination:
-        storageClass: %s
-  provider:
-    source:
-      name: %s
-      namespace: %s
-    destination:
-      name: %s
-      namespace: %s
-`, mapName, namespace, sourceStorageID, destinationStorageClass,
-		sourceProvider, namespace, destinationProvider, namespace)
+	data := StorageMapData{
+		MapName:                 mapName,
+		Namespace:               namespace,
+		SourceProvider:          sourceProvider,
+		DestinationProvider:     destinationProvider,
+		SourceStorageID:         sourceStorageID,
+		DestinationStorageClass: destinationStorageClass,
+	}
 
-	return os.WriteFile(filename, []byte(content), 0644)
+	return writeTemplateToFile("storageMap", storageMapTemplate, data, filename)
 }
 
-func CreateNetworkMapYaml(
+func createNetworkMapYaml(
 	filename string,
 	mapName string,
 	namespace string,
@@ -242,46 +235,21 @@ func CreateNetworkMapYaml(
 	sourceNetworkName string,
 	destinationType string,
 ) error {
-	content := fmt.Sprintf(`apiVersion: forklift.konveyor.io/v1beta1
-kind: NetworkMap
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  map:
-    - source:
-        id: %s
-        name: %s
-      destination:
-        type: %s
-  provider:
-    source:
-      name: %s
-      namespace: %s
-    destination:
-      name: %s
-      namespace: %s
-`, mapName, namespace, sourceNetworkID, sourceNetworkName, destinationType,
-		sourceProvider, namespace, destinationProvider, namespace)
+	data := NetworkMapData{
+		MapName:             mapName,
+		Namespace:           namespace,
+		SourceProvider:      sourceProvider,
+		DestinationProvider: destinationProvider,
+		SourceNetworkID:     sourceNetworkID,
+		SourceNetworkName:   sourceNetworkName,
+		DestinationType:     destinationType,
+	}
 
-	return os.WriteFile(filename, []byte(content), 0644)
+	return writeTemplateToFile("networkMap", networkMapTemplate, data, filename)
+
 }
 
-type MigrationStatus struct {
-	Phase      string `json:"phase"`
-	Conditions []struct {
-		Type    string `json:"type"`
-		Status  string `json:"status"`
-		Reason  string `json:"reason,omitempty"`
-		Message string `json:"message,omitempty"`
-	} `json:"conditions"`
-}
-
-type Migration struct {
-	Status MigrationStatus `json:"status"`
-}
-
-func WaitForMigrationComplete(namespace, migrationName string, timeout time.Duration) error {
+func waitForMigrationComplete(namespace, migrationName string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -315,7 +283,7 @@ func WaitForMigrationComplete(namespace, migrationName string, timeout time.Dura
 func extractProgressPercentage(migration *unstructured.Unstructured) string {
 	vms, found, err := unstructured.NestedSlice(migration.Object, "status", "vms")
 	if err != nil || !found || len(vms) == 0 {
-		return "⚠️ No VMs found in migration status"
+		return "No VMs found in migration status"
 	}
 
 	var sb strings.Builder
@@ -464,4 +432,71 @@ func isMigrationFailed(migration *unstructured.Unstructured) bool {
 		}
 	}
 	return false
+}
+
+func RunOvaMigration(vmName, outputDir string) error {
+	namespace := os.Getenv("NAMESPACE")
+	secretNamespace := namespace
+	nfsURL := os.Getenv("OVA_PROVIDER_NFS_SERVER_PATH")
+	// Use regenrated IDs for the sake of this example
+	sourceStorageID := "2064f8686d4d7bbc79c201ea82518f263baa"
+	sourceNetworkID := "d722072e029481b6ca769f17e8fc112a9f30"
+	vmID := "42a55f0071494abc8e598aa681d1e821f73b"
+
+	ovaProviderYaml := filepath.Join(outputDir, "ova-provider.yaml")
+	storageMapYaml := filepath.Join(outputDir, "storage-map.yaml")
+	networkMapYaml := filepath.Join(outputDir, "network-map.yaml")
+	migrationPlanYaml := filepath.Join(outputDir, "plan.yaml")
+	migrationYaml := filepath.Join(outputDir, "migration.yaml")
+
+	if namespace == "" {
+		return fmt.Errorf("NAMESPACE environment variable not set")
+	}
+	if nfsURL == "" {
+		return fmt.Errorf("OVA_PROVIDER_NFS_SERVER_PATH environment variable not set")
+	}
+
+	if err := createOvaProviderYaml(namespace, providerName, secretName, secretNamespace, nfsURL, ovaProviderYaml); err != nil {
+		return fmt.Errorf("failed to create provider YAML: %w", err)
+	}
+	if err := applyYaml(ovaProviderYaml); err != nil {
+		return fmt.Errorf("failed to apply provider YAML: %w", err)
+	}
+
+	if err := createStorageMapYaml(storageMapYaml, storageMapName, namespace, providerName, sourceProviderType, sourceStorageID, destStorageClass); err != nil {
+		return fmt.Errorf("failed to create storage map YAML: %w", err)
+	}
+	if err := applyYamlFile(storageMapYaml); err != nil {
+		return fmt.Errorf("failed to apply storage map YAML: %w", err)
+	}
+
+	if err := createNetworkMapYaml(networkMapYaml, networkMapName, namespace, providerName, sourceProviderType, sourceNetworkID, sourceNetworkName, destNetworkType); err != nil {
+		return fmt.Errorf("failed to create network map YAML: %w", err)
+	}
+	if err := applyYamlFile(networkMapYaml); err != nil {
+		return fmt.Errorf("failed to apply network map YAML: %w", err)
+	}
+
+	if err := createMigrationPlanYaml(namespace, planName, providerName, sourceProviderType, networkMapName, storageMapName, vmID, vmName, migrationPlanYaml); err != nil {
+		return fmt.Errorf("failed to create migration plan YAML: %w", err)
+	}
+	if err := applyYamlFile(migrationPlanYaml); err != nil {
+		return fmt.Errorf("failed to apply migration plan YAML: %w", err)
+	}
+
+	if err := createMigrationYaml(migrationYaml, migrationName, namespace, planName, namespace); err != nil {
+		return fmt.Errorf("failed to create migration YAML: %w", err)
+	}
+	if err := applyYaml(migrationYaml); err != nil {
+		return fmt.Errorf("failed to apply migration YAML: %w", err)
+	}
+
+	fmt.Printf("Waiting for migration %s to complete...\n", migrationName)
+	timeout := 15 * time.Minute
+	if err := waitForMigrationComplete(namespace, migrationName, timeout); err != nil {
+		return fmt.Errorf("migration monitoring failed: %w", err)
+	}
+
+	fmt.Println("Migration completed successfully!")
+	return nil
 }

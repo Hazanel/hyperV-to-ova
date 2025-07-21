@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // RemoveFileExtension strips the file extension from a filename.
@@ -17,7 +18,7 @@ func ConvertVHDXToRaw(vhdxPath string) error {
 
 	fmt.Println("Converting to RAW format with virt-v2v...")
 
-	cmd := exec.Command("virt-v2v", "-i", "disk", vhdxPath, "-o", "local", "-of", "raw", "-os", ".")
+	cmd := exec.Command("virt-v2v", "-i", "disk", vhdxPath, "-o", "local", "-of", "raw", "-os", filepath.Dir(vhdxPath))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

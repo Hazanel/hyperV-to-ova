@@ -85,7 +85,7 @@ func performVMAction(client *winrm.Client, vmName string, action VMAction) error
 		return fmt.Errorf("VM action failed (%s): %w", action, err)
 	}
 
-	fmt.Printf("Action %s completed successfully on '%s'\n", action, vmName)
+	fmt.Printf("Action %s completed successfully on '%s'\n", strings.Fields(string(action))[0], vmName)
 	return nil
 }
 
@@ -161,7 +161,7 @@ func CopyRemoteFileWithProgress(user, password, host, sshPort, remotePath, local
 	defer file.Close()
 
 	done := make(chan struct{})
-	go showProgress(localFilename, done)
+	go showProgress(file.Name(), done)
 
 	err = scpClient.CopyFromRemote(context.Background(), file, remotePath)
 	close(done) // stop the progress ticker

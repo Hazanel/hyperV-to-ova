@@ -47,11 +47,6 @@ func FormatFromHyperV(vm interface{}, remptePath string) error {
 		itemInstanceID = 1
 	)
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("cannot get working directory: %w", err)
-	}
-
 	// --- CPU ---
 	cpuCount := int64(1)
 	if val, ok := vmMap["ProcessorCount"].(float64); ok {
@@ -95,22 +90,13 @@ func FormatFromHyperV(vm interface{}, remptePath string) error {
 
 	// --- Hard Disks ---
 	if hdList, ok := vmMap["HardDrives"].([]interface{}); ok {
-		for i, raw := range hdList {
-			hd, ok := raw.(map[string]interface{})
-			if !ok {
-				continue
-			}
+		for i := range hdList {
 
 			diskIndex := i + 1
 			fileRefID := fmt.Sprintf("file%d", diskIndex)
-			pathRaw, _ := hd["Path"].(string)
-			// Normalize Windows-style path to POSIX-style for path.Base to work
-			normalized := strings.ReplaceAll(pathRaw, "\\", "/")
-			base := filepath.Base(normalized)                        // e.g., "disk1.vhdx"
-			baseName := strings.TrimSuffix(base, filepath.Ext(base)) // e.g., "disk1"
-			fileName := baseName + ".raw"
-			rawDiskPath := filepath.Join(wd, fileName)
 
+			rawDiskPath := hyperv.RemoveFileExtension(remptePath) + ".raw"
+			fileName := filepath.Base(rawDiskPath)
 			diskCapacity := int64(10 * 1024 * 1024 * 1024) // fallback size
 			if stat, err := os.Stat(rawDiskPath); err == nil {
 				diskCapacity = stat.Size()
