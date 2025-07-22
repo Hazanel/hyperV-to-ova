@@ -29,10 +29,11 @@ go.work.sum
 # Editor/IDE
  .idea/
  .vscode/
-
 bin
 *.raw
 *.xml
 *.ovf
 hyperv
 *.vhdx
+
+.vscode/settings.json

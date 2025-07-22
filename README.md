@@ -82,7 +82,60 @@ This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtual
     You can export them into your shell or store in a .env file and load using source .env.
 
 
-🛠️ Build and Run
-   
-    go build -o hyperv ./cmd
-    ./hyperv
+
+ ## 🛠️  Building and Running with Docker
+
+This project can be built and run either natively on your system or inside a Docker container.
+
+### Native Build
+
+To build the tool directly on your system, run:
+
+```sh
+go build -o hyperv ./cmd/
+```
+
+### Docker Build
+
+To build and run the tool in a container:
+
+1. **Build the Docker image:**
+
+   ```sh
+   docker build -t hyperv-ova .
+   ```
+
+2. **Run the container:**
+
+   ```sh
+   docker run --rm -it \
+        --privileged \
+        -v $(pwd)/output:/output \
+        --network host \
+        -e HYPERV_USER=youruser \
+        -e HYPERV_PASS=yourpass \
+        -e HYPERV_HOST=yourhost \
+        -e HYPERV_PORT=5985 \
+        -e SSH_PORT=22 \
+        -e NAMESPACE=your-namespace \
+        -e OVA_PROVIDER_NFS_SERVER_PATH=your-nfs-path \
+        hyperv-ova
+   ```
+
+    or (with .env file)
+    ```sh
+    docker run --rm -it \
+        --privileged \
+        --env-file .env \
+        -v $(pwd)/output:/output \
+        --network host \
+        hyperv-ova
+    ```
+
+   - The `-v $(pwd)/output:/output` option mounts the output directory to persist files on your host.
+   - Set all required environment variables as shown above.
+
+### Notes
+
+- The Docker image installs all required system dependencies, including Go, `qemu-img`, `virt-v2v`, and `openssh-clients`.
+- You can use either the native build or the Docker container, depending on your environment and preference.
