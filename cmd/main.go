@@ -5,6 +5,7 @@ import (
 	"fmt"
 	ocp "hyperv/cluster"
 	hyperv "hyperv/common"
+	nfs "hyperv/nfs"
 	osutil "hyperv/os"
 	"hyperv/ova"
 	"log"
@@ -39,6 +40,16 @@ const savejsonfile bool = false
 
 func main() {
 
+	//Detect special flag to only run the CopyFilesNfsServer (under sudo)
+	if len(os.Args) >= 4 && os.Args[1] == "--copy-files" {
+		fmt.Println("ARGS:", os.Args)
+		srcDir := os.Args[2]
+		dstDir := os.Args[3]
+		if err := nfs.CopyFilesNfsServer(srcDir, dstDir); err != nil {
+			log.Fatalf("Copy failed: %v", err)
+		}
+		os.Exit(0)
+	}
 	connections, err := hyperv.LoadHyperVConnection()
 	if err != nil {
 		log.Fatalf("Connection setup failed: %v", err)
@@ -143,11 +154,23 @@ func main() {
 	wg.Wait()
 	fmt.Println("All VMs processed successfully.")
 
-	if err := ocp.LoginToCluster(); err != nil {
-		log.Fatalf("Cluster login failed: %v", err)
+	if hyperv.AskYesNo("Would you like to copy OVA files to the NFS server?") {
+		if err := nfs.CopyToNFSServer(outputDir); err != nil {
+			log.Fatalf("Copy failed: %v", err)
+		}
+	} else {
+		fmt.Println("Skipping copy to NFS server.")
 	}
 
-	if err := ocp.RunOvaMigration(names[0], outputDir); err != nil {
-		log.Fatalf("Migration failed: %v", err)
+	if hyperv.AskYesNo("Would you like to create an  OVA provider and perform a migration?") {
+		if err := ocp.LoginToCluster(); err != nil {
+			log.Fatalf("Cluster login failed: %v", err)
+		}
+
+		if err := ocp.RunOvaMigration(names[0], outputDir); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	} else {
+		fmt.Println("Skipping OVA provider creation and migration.")
 	}
 }

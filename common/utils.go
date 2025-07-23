@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,4 +34,12 @@ func SaveVMJsonToFile(jsonOut []byte, filename string) error {
 func RemoveFileExtension(filename string) string {
 	ext := filepath.Ext(filename)
 	return strings.TrimSuffix(filename, ext)
+}
+
+func AskYesNo(prompt string) bool {
+	fmt.Print(prompt + " [y/N]: ")
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes"
 }
