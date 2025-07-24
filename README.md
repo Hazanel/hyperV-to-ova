@@ -31,9 +31,9 @@ This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtual
 
     - This server is used to:
 
-    - Host the VHDX disk images and their associated OVF files.
+        - Host the VHDX disk images and their associated OVF files.
 
-    - Provide shared storage that the Forklift controller and OVA provider can access during conversion and transfer.
+        - Provide shared storage that the Forklift controller and OVA provider can access during conversion and transfer.
     
 
 ### ✅ Tools Required
