@@ -93,7 +93,7 @@ func main() {
 
 			vmInfoMap := infoResult.(map[string]interface{})
 
-			// Extract dislk path from guest vm
+			// Extract disk path from guest vm
 			remotePath, _ := hyperv.ExtractPath(vmInfoMap)
 			if remotePath == "" {
 				log.Printf("No VHDX path found in VM data for %s", vmName)
