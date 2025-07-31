@@ -78,6 +78,7 @@ This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtual
     CLUSTER_NFS_SERVER_PATH=
     OVA_PROVIDER_NFS_SERVER_PATH=
     NAMESPACE=
+    SAVE_VM_INFO=
 
     You can export them into your shell or store in a .env file and load using source .env.
 
@@ -118,6 +119,7 @@ To build and run the tool in a container:
         -e HYPERV_PORT=5985 \
         -e SSH_PORT=22 \
         -e NAMESPACE=your-namespace \
+        -e SAVE_VM_INFO=false \
         -e OVA_PROVIDER_NFS_SERVER_PATH=your-nfs-path \
         hyperv-ova
    ```

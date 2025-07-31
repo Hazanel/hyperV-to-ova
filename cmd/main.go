@@ -36,8 +36,6 @@ import (
 // # Allow through firewall
 // New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
 
-const savejsonfile bool = false
-
 func main() {
 
 	//Detect special flag to only run the CopyFilesNfsServer (under sudo)
@@ -121,9 +119,10 @@ func main() {
 				return
 			}
 
-			if savejsonfile {
+			//If you want to save the VM info to a file, set the SAVE_VM_INFO environment variable to true
+			if os.Getenv("SAVE_VM_INFO") == "true" {
 				jsonOut, _ := json.MarshalIndent(infoResult, "", "  ")
-				if err := hyperv.SaveVMJsonToFile(jsonOut, vmName+"json"); err != nil {
+				if err := hyperv.SaveVMJsonToFile(jsonOut, filepath.Join(outputDir, vmName+".json")); err != nil {
 					log.Printf("Failed to save JSON for %s: %v", vmName, err)
 					return
 				}
