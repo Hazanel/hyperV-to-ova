@@ -136,12 +136,6 @@ func main() {
 				return
 			}
 
-			// Convert VHDX to raw format
-			if err := hyperv.ConvertVHDXToRaw(localFile); err != nil {
-				log.Printf("Failed to convert VHDX for %s: %v", vmName, err)
-				return
-			}
-
 			// Format as OVA
 			if err := ova.FormatFromHyperV(vmInfoMap, localFile); err != nil {
 				log.Printf("Failed to format OVF for %s: %v", vmName, err)

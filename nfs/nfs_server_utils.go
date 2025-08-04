@@ -155,7 +155,7 @@ func CopyFilesNfsServer(srcDir, dstDir string) error {
 		}
 
 		ext := strings.ToLower(filepath.Ext(d.Name()))
-		if ext != ".raw" && ext != ".ovf" {
+		if ext != ".vhdx" && ext != ".ovf" {
 			return nil
 		}
 

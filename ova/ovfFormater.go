@@ -32,7 +32,7 @@ func GetOVFOperatingSystemID(osName string) int {
 	return 1 // Other
 }
 
-func FormatFromHyperV(vm interface{}, remptePath string) error {
+func FormatFromHyperV(vm interface{}, rawDiskPath string) error {
 
 	vmMap, ok := vm.(map[string]interface{})
 	if !ok {
@@ -95,7 +95,6 @@ func FormatFromHyperV(vm interface{}, remptePath string) error {
 			diskIndex := i + 1
 			fileRefID := fmt.Sprintf("file%d", diskIndex)
 
-			rawDiskPath := hyperv.RemoveFileExtension(remptePath) + ".raw"
 			fileName := filepath.Base(rawDiskPath)
 			diskCapacity := int64(10 * 1024 * 1024 * 1024) // fallback size
 			if stat, err := os.Stat(rawDiskPath); err == nil {
@@ -235,7 +234,7 @@ func FormatFromHyperV(vm interface{}, remptePath string) error {
 		return fmt.Errorf("failed to marshal OVF: %w", err)
 	}
 
-	ovfPath := hyperv.RemoveFileExtension(remptePath) + ".ovf"
+	ovfPath := hyperv.RemoveFileExtension(rawDiskPath) + ".ovf"
 	os.WriteFile(ovfPath, ovf, 0644)
 	fmt.Println("OVF file written to:", ovfPath)
 

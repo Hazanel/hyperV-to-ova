@@ -4,8 +4,8 @@ FROM fedora:40
 RUN dnf -y install \
     wget \
     tar \
-    qemu-img \
-    virt-v2v \
+ #   qemu-img \
+ #   virt-v2v \
     openssh-clients \
     git \
     unzip \
@@ -13,7 +13,7 @@ RUN dnf -y install \
  && rm -rf /usr/local/go \
  && tar -C /usr/local -xzf go1.24.4.linux-amd64.tar.gz \
  && ln -s /usr/local/go/bin/go /usr/bin/go \
- && dnf install -y https://kojihub.stream.centos.org/kojifiles/packages/virtio-win/1.9.40/1.el9/noarch/virtio-win-1.9.40-1.el9.noarch.rpm \
+ #&& dnf install -y https://kojihub.stream.centos.org/kojifiles/packages/virtio-win/1.9.40/1.el9/noarch/virtio-win-1.9.40-1.el9.noarch.rpm \
  && dnf clean all \
  && rm -f go1.24.4.linux-amd64.tar.gz
 

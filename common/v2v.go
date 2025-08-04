@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 )
 
-// RemoveFileExtension strips the file extension from a filename.
-
 // ConvertVHDXToRaw converts a VHDX file to RAW format using virt-v2v.
 func ConvertVHDXToRaw(vhdxPath string) error {
 
