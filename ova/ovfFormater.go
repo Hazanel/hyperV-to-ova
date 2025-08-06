@@ -32,7 +32,7 @@ func GetOVFOperatingSystemID(osName string) int {
 	return 1 // Other
 }
 
-func FormatFromHyperV(vm interface{}, rawDiskPath string) error {
+func FormatFromHyperV(vm interface{}, rawDiskPaths []string) error {
 
 	vmMap, ok := vm.(map[string]interface{})
 	if !ok {
@@ -90,17 +90,23 @@ func FormatFromHyperV(vm interface{}, rawDiskPath string) error {
 
 	// --- Hard Disks ---
 	if hdList, ok := vmMap["HardDrives"].([]interface{}); ok {
+		// Process each disk using the corresponding path from rawDiskPaths
 		for i := range hdList {
+			// Check if we have a corresponding disk path
+			if i >= len(rawDiskPaths) {
+				return fmt.Errorf("mismatch: VM has %d hard drives but only %d disk paths provided", len(hdList), len(rawDiskPaths))
+			}
 
+			diskPath := rawDiskPaths[i]
 			diskIndex := i + 1
 			fileRefID := fmt.Sprintf("file%d", diskIndex)
 
-			fileName := filepath.Base(rawDiskPath)
+			fileName := filepath.Base(diskPath)
 			diskCapacity := int64(10 * 1024 * 1024 * 1024) // fallback size
-			if stat, err := os.Stat(rawDiskPath); err == nil {
+			if stat, err := os.Stat(diskPath); err == nil {
 				diskCapacity = stat.Size()
 			} else {
-				return fmt.Errorf("failed to get size of raw disk file %s: %w", rawDiskPath, err)
+				return fmt.Errorf("failed to get size of raw disk file %s: %w", diskPath, err)
 			}
 
 			files = append(files, File{
@@ -234,7 +240,15 @@ func FormatFromHyperV(vm interface{}, rawDiskPath string) error {
 		return fmt.Errorf("failed to marshal OVF: %w", err)
 	}
 
-	ovfPath := hyperv.RemoveFileExtension(rawDiskPath) + ".ovf"
+	// Use the first disk path as base for OVF filename, or VM name if available
+	var basePath string
+	if len(rawDiskPaths) > 0 {
+		basePath = rawDiskPaths[0]
+	} else {
+		// Fallback if no disk paths provided
+		basePath = vmName + ".vhdx"
+	}
+	ovfPath := hyperv.RemoveFileExtension(basePath) + ".ovf"
 	os.WriteFile(ovfPath, ovf, 0644)
 	fmt.Println("OVF file written to:", ovfPath)
 

@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -91,10 +92,10 @@ func main() {
 
 			vmInfoMap := infoResult.(map[string]interface{})
 
-			// Extract disk path from guest vm
-			remotePath, _ := hyperv.ExtractPath(vmInfoMap)
-			if remotePath == "" {
-				log.Printf("No VHDX path found in VM data for %s", vmName)
+			// Extract disk paths from guest vm
+			remotePaths, found := hyperv.ExtractPath(vmInfoMap)
+			if !found || len(remotePaths) == 0 {
+				log.Printf("No VHDX paths found in VM data for %s", vmName)
 				return
 			}
 
@@ -128,16 +129,29 @@ func main() {
 				}
 			}
 
-			// Copy remote file disk with progress
-			localFile := filepath.Join(outputDir, vmName+".vhdx")
-			if err := hyperv.CopyRemoteFileWithProgress(connections.User, connections.Password,
-				connections.HostIP, connections.SSHPort, remotePath, localFile); err != nil {
-				log.Printf("SCP transfer failed for %s: %v", vmName, err)
-				return
+			// Process each hard drive and collect local file paths
+			var localFiles []string
+			for _, remotePath := range remotePaths {
+				// Extract just the filename from Windows path (handle both / and \ separators)
+				originalFileName := remotePath
+				if idx := strings.LastIndex(originalFileName, "\\"); idx != -1 {
+					originalFileName = originalFileName[idx+1:]
+				} else if idx := strings.LastIndex(originalFileName, "/"); idx != -1 {
+					originalFileName = originalFileName[idx+1:]
+				}
+				localFile := filepath.Join(outputDir, originalFileName)
+
+				if err := hyperv.CopyRemoteFileWithProgress(connections.User, connections.Password,
+					connections.HostIP, connections.SSHPort, remotePath, localFile); err != nil {
+					log.Printf("SCP transfer failed for %s (disk %s): %v", vmName, originalFileName, err)
+					return
+				}
+
+				localFiles = append(localFiles, localFile)
 			}
 
-			// Format as OVA
-			if err := ova.FormatFromHyperV(vmInfoMap, localFile); err != nil {
+			// Format as unified OVA with all disks
+			if err := ova.FormatFromHyperV(vmInfoMap, localFiles); err != nil {
 				log.Printf("Failed to format OVF for %s: %v", vmName, err)
 				return
 			}

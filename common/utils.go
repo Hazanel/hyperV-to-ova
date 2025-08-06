@@ -8,17 +8,20 @@ import (
 	"strings"
 )
 
-func ExtractPath(vm map[string]interface{}) (string, bool) {
+func ExtractPath(vm map[string]interface{}) ([]string, bool) {
+	var paths []string
 	if drives, ok := vm["HardDrives"]; ok {
 		if dlist, ok := drives.([]interface{}); ok && len(dlist) > 0 {
-			if d, ok := dlist[0].(map[string]interface{}); ok {
-				if p, ok := d["Path"].(string); ok {
-					return p, true
+			for _, drive := range dlist {
+				if d, ok := drive.(map[string]interface{}); ok {
+					if p, ok := d["Path"].(string); ok {
+						paths = append(paths, p)
+					}
 				}
 			}
 		}
 	}
-	return "", false
+	return paths, len(paths) > 0
 }
 
 func SaveVMJsonToFile(jsonOut []byte, filename string) error {
