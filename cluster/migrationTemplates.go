@@ -6,12 +6,12 @@ metadata:
   name: {{.MapName}}
   namespace: {{.Namespace}}
 spec:
-  map:
+  map:{{range .NetworkMappings}}
     - source:
-        id: {{.SourceNetworkID}}
-        name: {{.SourceNetworkName}}
+        id: {{.SourceID}}
+        name: {{.SourceName}}
       destination:
-        type: {{.DestinationType}}
+        type: {{.DestinationType}}{{end}}
   provider:
     source:
       name: {{.SourceProvider}}
@@ -27,11 +27,11 @@ metadata:
   name: {{.MapName}}
   namespace: {{.Namespace}}
 spec:
-  map:
+  map:{{range .StorageMappings}}
     - source:
-        id: {{.SourceStorageID}}
+        id: {{.SourceID}}
       destination:
-        storageClass: {{.DestinationStorageClass}}
+        storageClass: {{.DestinationStorageClass}}{{end}}
   provider:
     source:
       name: {{.SourceProvider}}
@@ -149,13 +149,23 @@ type MigrationData struct {
 	PlanNamespace string
 }
 
-type StorageMapData struct {
-	MapName                 string
-	Namespace               string
-	SourceProvider          string
-	DestinationProvider     string
-	SourceStorageID         string
+type StorageMapping struct {
+	SourceID                string
 	DestinationStorageClass string
+}
+
+type StorageMapData struct {
+	MapName             string
+	Namespace           string
+	SourceProvider      string
+	DestinationProvider string
+	StorageMappings     []StorageMapping
+}
+
+type NetworkMapping struct {
+	SourceID        string
+	SourceName      string
+	DestinationType string
 }
 
 type NetworkMapData struct {
@@ -163,7 +173,5 @@ type NetworkMapData struct {
 	Namespace           string
 	SourceProvider      string
 	DestinationProvider string
-	SourceNetworkID     string
-	SourceNetworkName   string
-	DestinationType     string
+	NetworkMappings     []NetworkMapping
 }
