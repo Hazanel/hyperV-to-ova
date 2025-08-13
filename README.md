@@ -1,6 +1,6 @@
 # 🛠️ Hyper-V to OpenShift 
 
-This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtualization**. It connects to Hyper-V , extracts VM metadata, converts `.vhdx` disks to `.raw`, generates OVF files, and applies the migration plan to OpenShift.
+This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtualization**. It connects to Hyper-V , extracts VM metadata, generates OVF files, and applies the migration plan to OpenShift.
 
 ---
 
@@ -8,7 +8,6 @@ This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtual
 
 - Connects to a remote **Hyper-V host** 
 - Downloads VM `.vhdx` disks 
-- Converts `.vhdx` to `.raw` using `virt-v2v`
 - Generates an **OVF** descriptor for the VM
 - Creates an **OVA Provider** in Forklift based on the OVF
 - Applies a **migration plan** using OpenShift CRDs
@@ -37,16 +36,6 @@ This tool automates the migration of VMs from **Hyper-V** to **OpenShift Virtual
     
 
 ### ✅ Tools Required
-
-`qemu-img` and  `virt-v2v` on local host : For VHDX to RAW conversion  
-
-    sudo dnf install @virtualization qemu-kvm libvirt virt-install bridge-utils virt-manager -y
-    sudo systemctl enable --now libvirtd
-    sudo dnf install virt-v2v -y
-    
-    windows drivers :
-        dnf install -y https://kojihub.stream.centos.org/kojifiles/packages/virtio-win/1.9.40/1.el9/noarch/virtio-win-1.9.40-1.el9.noarch.rpm
-
 
 
 🧩 WinRM Setup on hyperV
@@ -139,5 +128,5 @@ To build and run the tool in a container:
 
 ### Notes
 
-- The Docker image installs all required system dependencies, including Go, `qemu-img`, `virt-v2v`, and `openssh-clients`.
+- The Docker image installs all required system dependencies.
 - You can use either the native build or the Docker container, depending on your environment and preference.
