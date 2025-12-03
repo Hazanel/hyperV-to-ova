@@ -103,10 +103,17 @@ func FormatFromHyperV(vm interface{}, rawDiskPaths []string) error {
 
 			fileName := filepath.Base(diskPath)
 			diskCapacity := int64(10 * 1024 * 1024 * 1024) // fallback size
-			if stat, err := os.Stat(diskPath); err == nil {
-				diskCapacity = stat.Size()
+			virtualSize, err := GetVHDXVirtualSize(diskPath)
+			if err != nil {
+				// Fallback to file size with warning
+				if stat, statErr := os.Stat(diskPath); statErr == nil {
+					diskCapacity = stat.Size()
+					fmt.Printf("Warning: Could not read VHDX virtual size for %s: %v, using file size\n", diskPath, err)
+				} else {
+					return fmt.Errorf("failed to get size of disk file %s: %w", diskPath, err)
+				}
 			} else {
-				return fmt.Errorf("failed to get size of raw disk file %s: %w", diskPath, err)
+				diskCapacity = int64(virtualSize)
 			}
 
 			files = append(files, File{
